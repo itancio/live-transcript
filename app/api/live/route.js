@@ -1,44 +1,40 @@
-import { DeepgramError, createClient } from "@deepgram/sdk";
-import { NextResponse } from "next/server";
+import { DeepgramError, createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
+import fetch from 'cross-fetch'
+import dotenv from 'dotenv'
 
+// STEP 1: Create a Deepgram client using the API key
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY ?? "");
 
 export async function POST(req) {
-    // Use the request object to invalidate the cache
-    const url = req.url;
-    
-    let {result, error} = await deepgram.manage.getProjects();
+    // STEP 2: Create a live transcription connection
+    const connection = deepgram.listen.live({
+        model: "nova-2",
+        language: "en-US",
+        smart_format: true,
+    });
 
-    if (error) {
-        return NextResponse.json(error)
-    }
+    // STEP 3: Listen for events from the live transcription connection
+    connection.on(LiveTranscriptionEvents.Open, () => {
+        connection.on(LiveTranscriptionEvents.Close, () => {
+            console.log("Connection closed.");
+        })
+        connection.on(LiveTranscriptionEvents.Transcript, (data) => {
+            console.log(data.channel.alternatives[0].transcript);
+        })
+        connection.on(LiveTranscriptionEvents.Metadata, (data) => {
+            console.log(data);
+        })
+        connection.on(LiveTranscriptionEvents.Error, (err) => {
+            console.error(err);
+        })
 
-    const project = result?.projects[0]
-
-    if (!project) {
-        return NextResponse.json(
-            new DeepgramError("No projects found")
-        )
-    }
-
-    let {newKeyResult, newKeyError} = await DeepgramError.manage.createProjectKey(project.project_id, {
-        comment: "Temporary API key",
-        scopes: ['usage'],
-        tags: ['next.js'],
-        time_to_live_in_seconds: 60,
+        // STEP 4: Fetch the audio stream and send it to the live transcription connection
+        fetch(url)
+            .then((r) => r.body)
+            .then((res) => {
+                connection.send(res.read());
+            })
     })
-
-    if (newKeyError) {
-        return NextResponse.json(newKeyError)
-    }
-
-    const response = NextResponse.json({...newKeyResult, url})
-    response.headers.set('surrogate-Control', 'no-store')
-    response.headers.set(
-        'Cache-control',
-        's-maxage=0, no-StorageEvent, no-cache, must-revalidatePath, proxy-revalidate'
-    );
-    response.headers.set('Expires', '0')
-    
-    return response;
 }
+
+live();
